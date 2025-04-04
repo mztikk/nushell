@@ -89,19 +89,19 @@ impl Command for External {
         // believe the user wants to use the windows association to run the script. The only
         // easy way to do this is to run cmd.exe with the script as an argument.
         let potential_nuscript_in_windows = if cfg!(windows) {
-            // let's make sure it's a .nu script
             if let Some(executable) = which(&expanded_name, &paths, cwd.as_ref()) {
+                // let's make sure it's a .nu script
                 let ext = executable
                     .extension()
                     .unwrap_or_default()
                     .to_string_lossy()
                     .to_uppercase();
-                ext == "NU"
+                (ext == "NU").then(|| executable)
             } else {
-                false
+                Option::None
             }
         } else {
-            false
+            Option::None
         };
 
         // let's make sure it's a .ps1 script, but only on Windows
@@ -124,7 +124,7 @@ impl Command for External {
         // executable to "cmd.exe" if it's a CMD internal command. If the
         // command is not found, display a helpful error message.
         let executable = if cfg!(windows)
-            && (is_cmd_internal_command(&name_str) || potential_nuscript_in_windows)
+            && (is_cmd_internal_command(&name_str))
         {
             PathBuf::from("cmd.exe")
         } else if cfg!(windows) && potential_powershell_script {
@@ -132,6 +132,8 @@ impl Command for External {
             // `powershell.exe` to run it. We shouldn't have to check for powershell.exe because
             // it's automatically installed on all modern windows systems.
             PathBuf::from("powershell.exe")
+        } else if cfg!(windows) && potential_nuscript_in_windows.is_some() {
+            std::env::current_exe().expect("current_exe() should succeed")
         } else {
             // Determine the PATH to be used and then use `which` to find it - though this has no
             // effect if it's an absolute path already
@@ -161,7 +163,7 @@ impl Command for External {
         // Configure args.
         let args = eval_external_arguments(engine_state, stack, call_args.to_vec())?;
         #[cfg(windows)]
-        if is_cmd_internal_command(&name_str) || potential_nuscript_in_windows {
+        if is_cmd_internal_command(&name_str) {
             // The /D flag disables execution of AutoRun commands from registry.
             // The /C flag followed by a command name instructs CMD to execute
             // that command and quit.
@@ -187,6 +189,9 @@ impl Command for External {
             for arg in &args {
                 command.raw_arg(arg.item.clone());
             }
+        } else if let Some(potential_nuscript_in_windows) = potential_nuscript_in_windows {
+            command.arg(potential_nuscript_in_windows);
+            command.args(args.into_iter().map(|s| s.item));
         } else {
             command.args(args.into_iter().map(|s| s.item));
         }
